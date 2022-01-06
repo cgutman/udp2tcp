@@ -6,16 +6,27 @@
 
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include <WinSock2.h>
-#include <Ws2ipdef.h>
+#include <MSWsock.h>
 
 #define MAX_PACKET_SIZE 4096
 
 #pragma comment(lib, "ws2_32.lib")
 
-static void enableTcpNoDelay(SOCKET sock)
+static void setTcpNoDelay(SOCKET sock, BOOL enabled)
 {
-    BOOL enable = TRUE;
-    setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (const char*)&enable, sizeof(enable));
+    if (setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (const char*)&enabled, sizeof(enabled)) == SOCKET_ERROR) {
+        int error = WSAGetLastError();
+        printf("setsockopt(TCP_NODELAY, %d) failed: %d\n", enabled, error);
+    }
+}
+
+static void setUdpConnReset(SOCKET sock, BOOL enabled)
+{
+    DWORD bytesReturned = 0;
+    if (WSAIoctl(sock, SIO_UDP_CONNRESET, &enabled, sizeof(enabled), NULL, 0, &bytesReturned, NULL, NULL) == SOCKET_ERROR) {
+        int error = WSAGetLastError();
+        printf("WSAIoctl(SIO_UDP_CONNRESET, %d) failed: %d\n", enabled, error);
+    }
 }
 
 SOCKET createUdpSocket(int localPort)
@@ -40,6 +51,10 @@ SOCKET createUdpSocket(int localPort)
         closesocket(sock);
         return INVALID_SOCKET;
     }
+
+    // Disable connection reset errors on UDP sockets to avoid terminating
+    // with an error if the destination UDP socket is closed.
+    setUdpConnReset(sock, FALSE);
 
     return sock;
 }
@@ -101,7 +116,9 @@ SOCKET createConnectedTcpSocket(char* remoteIp, int remotePort)
         return INVALID_SOCKET;
     }
 
-    enableTcpNoDelay(sock);
+    // Disable Nagle's algorithm to avoid increased latency on UDP
+    // protocols that transmit back-to-back latency-sensitive packets.
+    setTcpNoDelay(sock, TRUE);
 
     return sock;
 }
@@ -212,7 +229,9 @@ SOCKET acceptSocket(SOCKET tcpServerSock)
         return error;
     }
 
-    enableTcpNoDelay(tcpSock);
+    // Disable Nagle's algorithm to avoid increased latency on UDP
+    // protocols that transmit back-to-back latency-sensitive packets.
+    setTcpNoDelay(tcpSock, TRUE);
 
     return tcpSock;
 }
